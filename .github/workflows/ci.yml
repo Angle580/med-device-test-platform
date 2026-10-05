@@ -1,0 +1,66 @@
+name: Test-Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: 123456
+          MYSQL_DATABASE: med_device
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r sut/requirements.txt
+
+      - name: Lint (静态分析门禁)
+        run: flake8 autotest/ --max-line-length=120 --exclude=__pycache__
+
+      - name: Unit Test + Coverage (白盒测试)
+        run: |
+          coverage run -m pytest unit_tests/ -v
+          coverage report -m
+
+      - name: Integration API Test (接口自动化)
+        env:
+          DB_HOST: localhost
+          DB_USER: root
+          DB_PASSWORD: 123456
+          DB_NAME: med_device
+        run: |
+          # 启动被测系统
+          uvicorn sut.main:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+          pytest autotest/testcases/ -v --maxfail=5
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
